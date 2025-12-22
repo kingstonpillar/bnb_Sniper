@@ -1,0 +1,34 @@
+{
+  "name": "bnb-sniping-bot",
+  "version": "1.0.0",
+  "description": "BNB Chain PancakeSwap V2 sniping bot with liquidity, market health, security, and swap-fee protection",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --trace-warnings index.js",
+    "scan": "node newListingAlert.js",
+    "buy": "node buyCaller.js",
+    "test": "node testScanedPrice.js"
+  },
+  "keywords": [
+    "bnb",
+    "bsc",
+    "pancakeswap",
+    "sniper",
+    "crypto",
+    "ethers",
+    "trading-bot"
+  ],
+  "author": "YourName",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.2",
+    "node-fetch": "^3.3.2",
+    "p-queue": "^7.4.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
