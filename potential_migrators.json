@@ -1,0 +1,22 @@
+[
+  {
+    "tokenmint": "0x1111111111111111111111111111111111111111",
+    "quotetoken": "WBNB",
+    "pairaddress": "0x2222222222222222222222222222222222222222",
+    "blocknumber": 34567890,
+    "detectedat": 1730000000000,
+    "bnbLiquidity": 32.5,
+    "tokenSymbol": "TEST",
+    "tokenName": "Test Token"
+  },
+  {
+    "tokenmint": "0x3333333333333333333333333333333333333333",
+    "quotetoken": "WBNB",
+    "pairaddress": "0x4444444444444444444444444444444444444444",
+    "blocknumber": 34567910,
+    "detectedat": 1730000300000,
+    "bnbLiquidity": 58.9,
+    "tokenSymbol": "MOCK",
+    "tokenName": "Mock Finance"
+  }
+]
