@@ -4,7 +4,7 @@ import { autoBuyToken } from "./swapExecutor.js";
 import { securityPerfect } from "./securityPerfect.js";
 import { securitySafety } from "./securitycheck2.js";
 import { scanedPrice } from "./scanedPrice.js";
-import { liquidityLock, lockTime } from "./liquidityCheck.js";
+import { liquidityLock } from "./liquidityCheck.js";
 import { marketHealthPass } from "./marketHealth.js";
 
 const POTENTIAL_MIGRATORS = "./potential_migrators.json";
@@ -44,21 +44,26 @@ async function processToken(token) {
 
   try {
     /* ================= CALL ALL MODULES ================= */
-    const scan = await scanedPrice(tokenMint, pairAddress);
-    const secPerfect = await securityPerfect(pairAddress);
-    const secSafety = await securitySafety(pairAddress, tokenMint);
-    const marketPass = await marketHealthPass(pairAddress);
-    const liqLocked = await liquidityLock(tokenMint);
-const lockGood = await lockTime(tokenMint);
+    const [scan, secPerfect, secSafety, marketPass, liqLocked] = await Promise.all([
+  scanedPrice(tokenMint, pairAddress),
+  securityPerfect(pairAddress),
+  securitySafety(pairAddress, tokenMint),
+  marketHealthPass(pairAddress),
+  liquidityLock(tokenMint) // already includes lock duration check
+]);
 
-    if (!scan || !secPerfect || !secSafety || !marketPass || !liqLocked || !lockGood) {
-      console.log(`❌ ${tokenMint} failed one or more checks, skipping`);
-      token.remove = true;
-      return;
-    }
+if (!scan || !secPerfect || !secSafety || !marketPass || !liqLocked.locked) {
+  console.log(`❌ ${tokenMint} failed one or more checks, skipping`);
+  token.remove = true;
+  return;
+}
 
-    const priceNow = scan.priceBNB;
+const priceNow = scan.priceBNB;
 
+// Optional: log lock info
+console.log(
+  `✅ ${tokenMint} LP locked: ${(liqLocked.lockedPct*100).toFixed(2)}%, maxLockDuration=${(liqLocked.maxLockDuration/86400).toFixed(1)} days`
+);
     // ---------------- ENTRY PRICE ----------------
     if (!token.entryPrice) {
       token.entryPrice = priceNow;
@@ -134,10 +139,13 @@ const lockGood = await lockTime(tokenMint);
 export async function buyCaller() {
   const migrators = loadMigrators();
 
-  for (const token of migrators) {
-    await processToken(token); // All modules now receive pairAddress
-  }
+  // Wrap each token processing in a queue to respect RPC limits
+  const tokenPromises = migrators.map(token => rpcQueue.add(() => processToken(token)));
 
+  // Wait for all tokens to finish processing
+  await Promise.allSettled(tokenPromises);
+
+  // Save only tokens that are not marked for removal
   saveMigrators(migrators.filter(t => !t.remove));
 }
 
