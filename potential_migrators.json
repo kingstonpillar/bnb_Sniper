@@ -1,0 +1,10 @@
+[
+  {
+    "pairaddress": "0xAA72FD8A0ADb6903b35C29A8D50655d05C3fF253",
+    "token": "0xSomeTokenAddress1"
+  },
+  {
+    "pairaddress": "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "token": "0xSomeTokenAddress2"
+  }
+]
