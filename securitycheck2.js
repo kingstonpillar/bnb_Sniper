@@ -1,0 +1,176 @@
+import fs from "fs";
+import { ethers } from "ethers";
+import PQueue from "p-queue";
+import { bytecodeHashSimilarityCheck } from "./bytecodeCheck.js";
+
+/* ================= CONFIG ================= */
+const RPC_URLS = [
+  process.env.RPC_URL_51,
+  process.env.RPC_URL_61,
+  process.env.RPC_URL_7
+].filter(Boolean);
+
+if (RPC_URLS.length < 2) throw new Error("At least 2 RPC URLs required");
+
+const queue = new PQueue({ interval: 3000, intervalCap: 4, concurrency: 1 });
+
+let rpcIndex = 0;
+let provider = new ethers.JsonRpcProvider(RPC_URLS[rpcIndex]);
+
+function rotateRpc() {
+  rpcIndex = (rpcIndex + 1) % RPC_URLS.length;
+  provider = new ethers.JsonRpcProvider(RPC_URLS[rpcIndex]);
+}
+
+/* ================= CONSTANTS ================= */
+const WBNB = "0xBB4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c";
+const BURN_ADDRESSES = [ethers.ZeroAddress, "0x000000000000000000000000000000000000dEaD"];
+
+const PAIR_ABI = [
+  "function token0() view returns(address)",
+  "function token1() view returns(address)",
+  "function totalSupply() view returns(uint256)",
+  "function balanceOf(address) view returns(uint256)"
+];
+
+const ERC20_ABI = [
+  "function totalSupply() view returns(uint256)",
+  "function balanceOf(address) view returns(uint256)",
+  "function owner() view returns(address)"
+];
+
+/* ================= HELPERS ================= */
+async function withRpc(fn) {
+  let lastErr;
+  for (let i = 0; i < RPC_URLS.length; i++) {
+    try {
+      return await queue.add(() => fn(provider));
+    } catch (e) {
+      lastErr = e;
+      rotateRpc();
+    }
+  }
+  throw lastErr;
+}
+
+// Resolve token from pair
+async function resolveTokenFromPair(pair, prov) {
+  const lp = new ethers.Contract(pair, PAIR_ABI, prov);
+  const [t0, t1] = await Promise.all([lp.token0(), lp.token1()]);
+  if (t0.toLowerCase() === WBNB.toLowerCase()) return t1;
+  if (t1.toLowerCase() === WBNB.toLowerCase()) return t0;
+  throw new Error("Pair does not contain WBNB");
+}
+
+/* ================= CORE CHECKS ================= */
+
+// Ownership check on-chain
+async function ownershipScore(pair) {
+  return withRpc(async (prov) => {
+    const token = await resolveTokenFromPair(pair, prov);
+    const erc = new ethers.Contract(token, ERC20_ABI, prov);
+
+    try {
+      const ownerAddress = (await erc.owner()).toLowerCase();
+      if (
+        ownerAddress === ethers.ZeroAddress.toLowerCase() ||
+        ownerAddress === "0x000000000000000000000000000000000000dead"
+      ) {
+        return 10; // ownership renounced → safe
+      }
+      return 0; // owner exists → risky
+    } catch {
+      return 5; // no owner function → neutral
+    }
+  });
+}
+
+// Remaining checks (examples)
+async function devWalletScore(pair) {
+  return withRpc(async (prov) => {
+    const token = await resolveTokenFromPair(pair, prov);
+    const erc = new ethers.Contract(token, ERC20_ABI, prov);
+    const supply = Number(await erc.totalSupply());
+
+    let owner;
+    try {
+      owner = (await erc.owner()).toLowerCase();
+    } catch {
+      return 5;
+    }
+
+    const bal = Number(await erc.balanceOf(owner));
+    return bal / supply <= 0.05 ? 10 : 0;
+  });
+}
+
+async function sizeScore(pair) {
+  return withRpc(async (prov) => {
+    const token = await resolveTokenFromPair(pair, prov);
+    const code = await prov.getCode(token);
+    return code.length < 24_000 ? 5 : 0;
+  });
+}
+
+async function honeypotScore(pair) {
+  return withRpc(async (prov) => {
+    const token = await resolveTokenFromPair(pair, prov);
+    const erc = new ethers.Contract(token, ERC20_ABI, prov);
+    let score = 0;
+
+    try { await erc.transfer(ethers.ZeroAddress, 1n); score += 5; } catch { return 0; }
+    try { await erc.transferFrom(ethers.ZeroAddress, ethers.ZeroAddress, 1n); score += 5; } catch { }
+
+    const code = await prov.getCode(token);
+    const badPatterns = ["blacklist","cooldown","sellDelay","maxTx","antiBot"];
+    for (const p of badPatterns) if (code.toLowerCase().includes(p.toLowerCase())) score -= 3;
+
+    return Math.max(0, Math.min(15, score));
+  });
+}
+
+async function timeTrapScore(pair) {
+  return withRpc(async (prov) => {
+    const token = await resolveTokenFromPair(pair, prov);
+    const code = await prov.getCode(token);
+
+    const traps = ["block.timestamp","block.number","tradingEnabled","launchTime"];
+    const hits = traps.reduce((acc, t) => acc + (code.includes(t) ? 1 : 0), 0);
+
+    if (hits >= 3) return 0;
+    if (hits === 2) return 3;
+    if (hits === 1) return 6;
+    return 10;
+  });
+}
+
+async function somePairCheck(pair) {
+  try {
+    const code = await provider.getCode(pair);
+    return code && code !== "0x";
+  } catch {
+    return false;
+  }
+}
+
+/* ================= MAIN FUNCTION ================= */
+export async function securitySafety(pairAddress, tokenMint) {
+  const pairOk = await somePairCheck(pairAddress);
+  const bytecodeScore = await bytecodeHashSimilarityCheck(tokenMint);
+
+  if (!pairOk || bytecodeScore < 10) return false;
+
+  // Calculate total score
+  const score = bytecodeScore
+              + await devWalletScore(pairAddress)
+              + await ownershipScore(pairAddress)
+              + await sizeScore(pairAddress)
+              + await honeypotScore(pairAddress)
+              + await timeTrapScore(pairAddress);
+
+  const maxScore = 20 + 10 + 10 + 5 + 15 + 10; // 70
+  console.log(`🔐 Security score for pair ${pairAddress}: ${score}/${maxScore}`);
+
+  // Adjust threshold if necessary
+  return score >= 58; // e.g., safe threshold
+}
