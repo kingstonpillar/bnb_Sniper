@@ -230,46 +230,53 @@ export async function checkLpOwnerBehavior(pairAddress) {
   // Known locker check
   let lockedLP = 0n;
   for (const locker of KNOWN_LOCKERS) {
-    lockedLP += await lp.balanceOf(locker);
-  }
+  lockedLP += await lp.balanceOf(locker);
+}
+if (lockedLP > totalLP) lockedLP = totalLP;
 
   // Mint control
   const mintable = await canMint(lp);
 
-  // OWNER BEHAVIOR VERDICT
-  const fullyBurned = burnedLP === totalLP;
-  const fullyLocked = lockedLP === totalLP;
+  // OWNER BEHAVIOR VERDICT (80% THRESHOLD, NO MIXING)
+const BURN_THRESHOLD = (totalLP * 80n) / 100n;
+const LOCK_THRESHOLD = (totalLP * 80n) / 100n;
 
-  if ((fullyBurned || fullyLocked) && !mintable) {
-    return {
-      verdict: "NO_OWNER_CONTROL",
-      totalLP: totalLP.toString(),
-      burnedLP: burnedLP.toString(),
-      lockedLP: lockedLP.toString(),
-      mintable
-    };
-  }
+const sufficientlyBurned = burnedLP >= BURN_THRESHOLD;
+const sufficientlyLocked = lockedLP >= LOCK_THRESHOLD;
 
+if ((sufficientlyBurned || sufficientlyLocked) && !mintable) {
   return {
-    verdict: "OWNER_HAS_CONTROL",
+    verdict: "NO_OWNER_CONTROL",
     totalLP: totalLP.toString(),
     burnedLP: burnedLP.toString(),
     lockedLP: lockedLP.toString(),
     mintable
   };
 }
+
+return {
+  verdict: "OWNER_HAS_CONTROL",
+  totalLP: totalLP.toString(),
+  burnedLP: burnedLP.toString(),
+  lockedLP: lockedLP.toString(),
+  mintable
+};
+}
 // ---------------- HELPER ----------------
 async function canMint(lp) {
   try {
-    const MINTER_ROLE = ethers.utils.id("MINTER_ROLE");
+    const MINTER_ROLE = ethers.id("MINTER_ROLE");
+
     for (const addr of KNOWN_LOCKERS) {
       if (lp.hasRole && await lp.hasRole(MINTER_ROLE, addr)) return true;
     }
-    // Fallback: check if mint() exists in bytecode
+
+    // Bytecode selector check (mint(address,uint256))
     const code = await provider.getCode(lp.address);
-    if (code.includes("function mint")) return true;
+    if (code.includes("40c10f19")) return true;
+
   } catch {
-    return true; // conservative: if anything fails, assume mintable
+    return true; // conservative: assume mintable if uncertain
   }
   return false;
 }
